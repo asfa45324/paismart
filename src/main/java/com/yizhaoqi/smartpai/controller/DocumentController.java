@@ -7,6 +7,7 @@ import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.service.DocumentService;
 import com.yizhaoqi.smartpai.utils.LogUtils;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -229,7 +230,8 @@ public class DocumentController {
     @GetMapping("/download")
     public ResponseEntity<?> downloadFileByName(
             @RequestParam String fileName,
-            @RequestParam(required = false) String token) {
+            @RequestParam(required = false) String token,
+            HttpServletRequest request) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DOWNLOAD_FILE_BY_NAME");
         try {
@@ -237,11 +239,19 @@ public class DocumentController {
             String userId = null;
             String orgTags = null;
 
-            if (token != null && !token.trim().isEmpty()) {
+            // 优先从请求头获取token
+            String headerToken = extractTokenFromRequest(request);
+            if (headerToken != null) {
+                try {
+                    userId = jwtUtils.extractUserIdFromToken(headerToken);
+                    orgTags = jwtUtils.extractOrgTagsFromToken(headerToken);
+                } catch (Exception e) {
+                    LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
+                }
+            } else if (token != null && !token.trim().isEmpty()) {
                 try {
                     // 解析JWT token获取用户信息
-                    // 注意：JWT中的sub字段存储用户名，userId字段存储用户ID（但有时可能存储的是用户名）
-                    userId = jwtUtils.extractUsernameFromToken(token);
+                    userId = jwtUtils.extractUserIdFromToken(token);
                     orgTags = jwtUtils.extractOrgTagsFromToken(token);
                 } catch (Exception e) {
                     LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
@@ -354,7 +364,8 @@ public class DocumentController {
     @GetMapping("/preview")
     public ResponseEntity<?> previewFileByName(
             @RequestParam String fileName,
-            @RequestParam(required = false) String token) {
+            @RequestParam(required = false) String token,
+            HttpServletRequest request) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_FILE_BY_NAME");
         try {
@@ -368,12 +379,19 @@ public class DocumentController {
                 if (authentication != null && authentication.isAuthenticated()
                         && authentication.getPrincipal() instanceof UserDetails) {
                     UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-                    userId = userDetails.getUsername();
-                    // 从userDetails中获取组织标签信息
-                    orgTags = userDetails.getAuthorities().stream()
-                            .map(auth -> auth.getAuthority().replace("ROLE_", ""))
-                            .findFirst()
-                            .orElse(null);
+                    // 从token中提取用户ID
+                    String headerToken = extractTokenFromRequest(request);
+                    if (headerToken != null) {
+                        userId = jwtUtils.extractUserIdFromToken(headerToken);
+                        orgTags = jwtUtils.extractOrgTagsFromToken(headerToken);
+                    } else if (token != null && !token.trim().isEmpty()) {
+                        // 如果URL参数中有token，使用它
+                        userId = jwtUtils.extractUserIdFromToken(token);
+                        orgTags = jwtUtils.extractOrgTagsFromToken(token);
+                    } else {
+                        // 如果没有token，使用用户名
+                        userId = userDetails.getUsername();
+                    }
                 }
             } catch (Exception e) {
                 LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", "anonymous", "Security上下文获取失败: fileName=%s", fileName);
@@ -482,6 +500,17 @@ public class DocumentController {
             response.put("message", "文件预览失败: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
+    }
+
+    /**
+     * 从请求头中提取JWT token
+     */
+    private String extractTokenFromRequest(HttpServletRequest request) {
+        String bearerToken = request.getHeader("Authorization");
+        if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+            return bearerToken.substring(7);
+        }
+        return null;
     }
 
     /**
