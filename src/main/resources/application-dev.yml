@@ -94,8 +94,8 @@ log4j:
 deepseek:
   api:
     url: https://api.deepseek.com/v1
-    key:
-    # DeepSeek API Key
+    model: deepseek-chat
+    key: sk-30bddf773ba24b849d46a66a84659067
 
 embedding:
   api:
