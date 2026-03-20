@@ -96,24 +96,10 @@ public class HybridSearchService {
                 s.query(q -> q.bool(b -> b
                         .must(mst -> mst.match(m -> m.field("textContent").query(query)))
                         .filter(f -> f.bool(bf -> bf
-                                // 条件1: 用户可访问自己的文档
+                                // 条件1: 自己的文档
                                 .should(s1 -> s1.term(t -> t.field("userId").value(userDbId)))
                                 // 条件2: 公开文档
-                                .should(s2 -> s2.term(t -> t.field("public").value(true)))
-                                // 条件3: 组织标签
-                                .should(s3 -> {
-                                    if (userEffectiveTags.isEmpty()) {
-                                        return s3.matchNone(mn -> mn);
-                                    } else if (userEffectiveTags.size() == 1) {
-                                        return s3.term(t -> t.field("orgTag").value(userEffectiveTags.get(0)));
-                                    } else {
-                                        return s3.bool(inner -> {
-                                            userEffectiveTags.forEach(tag -> inner
-                                                    .should(sh2 -> sh2.term(t -> t.field("orgTag").value(tag))));
-                                            return inner;
-                                        });
-                                    }
-                                })))));
+                                .should(s2 -> s2.term(t -> t.field("public").value(true)))))));
 
                 // 第二阶段 BM25 rescore
                 s.rescore(r -> r
@@ -195,27 +181,7 @@ public class HybridSearchService {
                                                     .should(s2 -> s2
                                                             .term(t -> t
                                                                     .field("public")
-                                                                    .value(true)))
-                                                    // 条件3: 用户可以访问其所属组织的文档（包含层级关系）
-                                                    .should(s3 -> {
-                                                        if (userEffectiveTags.isEmpty()) {
-                                                            return s3.matchNone(mn -> mn);
-                                                        } else if (userEffectiveTags.size() == 1) {
-                                                            // 单个标签使用 term 查询
-                                                            return s3.term(t -> t
-                                                                    .field("orgTag")
-                                                                    .value(userEffectiveTags.get(0)));
-                                                        } else {
-                                                            // 多个标签使用 bool should 组合多个 term 查询
-                                                            return s3.bool(innerBool -> {
-                                                                userEffectiveTags.forEach(
-                                                                        tag -> innerBool.should(sh -> sh.term(t -> t
-                                                                                .field("orgTag")
-                                                                                .value(tag))));
-                                                                return innerBool;
-                                                            });
-                                                        }
-                                                    })))))
+                                                                    .value(true)))))))
                     .minScore(0.3d)
                     .size(topK),
                     EsDocument.class);

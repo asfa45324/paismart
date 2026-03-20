@@ -126,8 +126,17 @@ public class DocumentService {
         
         try {
             // 获取用户有效的组织标签（包含层级关系）
-            User user = userRepository.findByUsername(userId)
-                .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
+            User user;
+            try {
+                // 尝试将userId解析为Long（用户ID）
+                Long userIdLong = Long.parseLong(userId);
+                user = userRepository.findById(userIdLong)
+                    .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
+            } catch (NumberFormatException e) {
+                // 如果userId不是数字，则作为用户名查找
+                user = userRepository.findByUsername(userId)
+                    .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
+            }
             
             List<String> userEffectiveTags = orgTagCacheService.getUserEffectiveOrgTags(user.getUsername());
             logger.debug("用户有效组织标签: {}", userEffectiveTags);

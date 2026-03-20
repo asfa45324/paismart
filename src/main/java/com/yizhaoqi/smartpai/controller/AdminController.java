@@ -2,8 +2,10 @@ package com.yizhaoqi.smartpai.controller;
 
 import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.Conversation;
+import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.ConversationRepository;
+import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
@@ -25,9 +27,12 @@ public class AdminController {
 
     @Autowired
     private ConversationRepository conversationRepository;
-    
+
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private OrganizationTagRepository organizationTagRepository;
 
     @Autowired
     private JwtUtils jwtUtils;
@@ -41,54 +46,57 @@ public class AdminController {
             @RequestParam(required = false) Long userid,
             @RequestParam(required = false) String start_date,
             @RequestParam(required = false) String end_date) {
-        
+
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_GET_CONVERSATIONS");
         String username = null;
         try {
             // 从token中提取用户名
             username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
             if (username == null || username.isEmpty()) {
-                LogUtils.logUserOperation("anonymous", "ADMIN_GET_CONVERSATIONS", "token_validation", "FAILED_INVALID_TOKEN");
+                LogUtils.logUserOperation("anonymous", "ADMIN_GET_CONVERSATIONS", "token_validation",
+                        "FAILED_INVALID_TOKEN");
                 monitor.end("获取对话历史失败：无效token");
                 throw new CustomException("无效的token", HttpStatus.UNAUTHORIZED);
             }
-            
+
             // 验证用户是否为管理员
             User admin = userRepository.findByUsername(username)
                     .orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND));
-            
+
             if (admin.getRole() != User.Role.ADMIN) {
                 LogUtils.logUserOperation(username, "ADMIN_GET_CONVERSATIONS", "authorization", "FAILED_NOT_ADMIN");
                 monitor.end("获取对话历史失败：非管理员");
                 throw new CustomException("权限不足", HttpStatus.FORBIDDEN);
             }
-            
+
             LogUtils.logBusiness("ADMIN_GET_CONVERSATIONS", username, "开始查询管理员对话历史");
-            
+
             // 解析时间范围
             LocalDateTime startDateTime = null;
             LocalDateTime endDateTime = null;
-            
+
             if (start_date != null && !start_date.trim().isEmpty()) {
                 try {
                     startDateTime = parseDateTime(start_date);
-                    LogUtils.logBusiness("ADMIN_GET_CONVERSATIONS", username, "解析起始时间: %s -> %s", start_date, startDateTime);
+                    LogUtils.logBusiness("ADMIN_GET_CONVERSATIONS", username, "解析起始时间: %s -> %s", start_date,
+                            startDateTime);
                 } catch (Exception e) {
                     LogUtils.logBusinessError("ADMIN_GET_CONVERSATIONS", username, "起始时间解析失败: %s", e, start_date);
                     throw new CustomException("起始时间格式错误: " + start_date, HttpStatus.BAD_REQUEST);
                 }
             }
-            
+
             if (end_date != null && !end_date.trim().isEmpty()) {
                 try {
                     endDateTime = parseDateTime(end_date);
-                    LogUtils.logBusiness("ADMIN_GET_CONVERSATIONS", username, "解析结束时间: %s -> %s", end_date, endDateTime);
+                    LogUtils.logBusiness("ADMIN_GET_CONVERSATIONS", username, "解析结束时间: %s -> %s", end_date,
+                            endDateTime);
                 } catch (Exception e) {
                     LogUtils.logBusinessError("ADMIN_GET_CONVERSATIONS", username, "结束时间解析失败: %s", e, end_date);
                     throw new CustomException("结束时间格式错误: " + end_date, HttpStatus.BAD_REQUEST);
                 }
             }
-            
+
             // 调用服务获取聊天记录
             List<Conversation> conversations;
             if (userid != null) {
@@ -119,7 +127,7 @@ public class AdminController {
                     conversations = conversationRepository.findAll();
                 }
             }
-            
+
             // 转换为前端需要的格式
             List<Map<String, Object>> formattedConversations = new ArrayList<>();
             for (Conversation conversation : conversations) {
@@ -127,36 +135,40 @@ public class AdminController {
                 Map<String, Object> userMessage = new HashMap<>();
                 userMessage.put("role", "user");
                 userMessage.put("content", conversation.getQuestion());
-                userMessage.put("timestamp", conversation.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
+                userMessage.put("timestamp",
+                        conversation.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
                 formattedConversations.add(userMessage);
-                
+
                 // 添加助手消息
                 Map<String, Object> assistantMessage = new HashMap<>();
                 assistantMessage.put("role", "assistant");
                 assistantMessage.put("content", conversation.getAnswer());
-                assistantMessage.put("timestamp", conversation.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
+                assistantMessage.put("timestamp",
+                        conversation.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
                 formattedConversations.add(assistantMessage);
             }
-            
+
             LogUtils.logBusiness("ADMIN_GET_CONVERSATIONS", username, "获取到 %d 条对话记录", formattedConversations.size());
             LogUtils.logUserOperation(username, "ADMIN_GET_CONVERSATIONS", "conversation_history", "SUCCESS");
             monitor.end("获取对话历史成功");
-            
+
             // 构建统一响应格式
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);
             response.put("message", "获取对话历史成功");
             response.put("data", formattedConversations);
             return ResponseEntity.ok().body(response);
-            
+
         } catch (CustomException e) {
             LogUtils.logBusinessError("ADMIN_GET_CONVERSATIONS", username, "获取对话历史失败: %s", e, e.getMessage());
             monitor.end("获取对话历史失败: " + e.getMessage());
-            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+            return ResponseEntity.status(e.getStatus())
+                    .body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
         } catch (Exception e) {
             LogUtils.logBusinessError("ADMIN_GET_CONVERSATIONS", username, "获取对话历史异常: %s", e, e.getMessage());
             monitor.end("获取对话历史异常: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
         }
     }
 
@@ -167,7 +179,7 @@ public class AdminController {
         if (dateTimeStr == null || dateTimeStr.trim().isEmpty()) {
             return null;
         }
-        
+
         try {
             // 尝试标准格式解析 (2023-01-01T12:00:00)
             return LocalDateTime.parse(dateTimeStr);
@@ -177,7 +189,7 @@ public class AdminController {
                 if (dateTimeStr.length() == 10) {
                     return LocalDateTime.parse(dateTimeStr + "T00:00:00");
                 }
-                
+
                 // 尝试使用自定义格式解析
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
                 return LocalDateTime.parse(dateTimeStr, formatter);
@@ -197,7 +209,7 @@ public class AdminController {
             @RequestParam(required = false, defaultValue = "1") Integer page,
             @RequestParam(required = false, defaultValue = "10") Integer size,
             @RequestParam(required = false) String orgTag) {
-        
+
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_GET_USERS");
         String username = null;
         try {
@@ -208,22 +220,23 @@ public class AdminController {
                 monitor.end("获取用户列表失败：无效token");
                 throw new CustomException("无效的token", HttpStatus.UNAUTHORIZED);
             }
-            
+
             // 验证用户是否为管理员
             User admin = userRepository.findByUsername(username)
                     .orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND));
-            
+
             if (admin.getRole() != User.Role.ADMIN) {
                 LogUtils.logUserOperation(username, "ADMIN_GET_USERS", "authorization", "FAILED_NOT_ADMIN");
                 monitor.end("获取用户列表失败：非管理员");
                 throw new CustomException("权限不足", HttpStatus.FORBIDDEN);
             }
-            
-            LogUtils.logBusiness("ADMIN_GET_USERS", username, "开始查询用户列表, page: %d, size: %d, orgTag: %s", page, size, orgTag);
-            
+
+            LogUtils.logBusiness("ADMIN_GET_USERS", username, "开始查询用户列表, page: %d, size: %d, orgTag: %s", page, size,
+                    orgTag);
+
             // 查询用户列表
             List<User> users = userRepository.findAll();
-            
+
             // 转换为前端需要的格式
             List<Map<String, Object>> formattedUsers = new ArrayList<>();
             for (User user : users) {
@@ -236,27 +249,124 @@ public class AdminController {
                 userMap.put("createdAt", user.getCreatedAt());
                 formattedUsers.add(userMap);
             }
-            
+
             LogUtils.logBusiness("ADMIN_GET_USERS", username, "获取到 %d 条用户记录", formattedUsers.size());
             LogUtils.logUserOperation(username, "ADMIN_GET_USERS", "user_list", "SUCCESS");
             monitor.end("获取用户列表成功");
-            
+
             // 构建统一响应格式
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);
             response.put("message", "获取用户列表成功");
             response.put("data", formattedUsers);
             return ResponseEntity.ok().body(response);
-            
+
         } catch (CustomException e) {
             LogUtils.logBusinessError("ADMIN_GET_USERS", username, "获取用户列表失败: %s", e, e.getMessage());
             monitor.end("获取用户列表失败: " + e.getMessage());
-            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+            return ResponseEntity.status(e.getStatus())
+                    .body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
         } catch (Exception e) {
             LogUtils.logBusinessError("ADMIN_GET_USERS", username, "获取用户列表异常: %s", e, e.getMessage());
             monitor.end("获取用户列表异常: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
         }
     }
-}
 
+    /**
+     * 获取组织标签树结构
+     */
+    @GetMapping("/org-tags/tree")
+    public ResponseEntity<?> getOrgTagsTree(@RequestHeader("Authorization") String token) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_GET_ORG_TAGS_TREE");
+        String username = null;
+        try {
+            // 从token中提取用户名
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "ADMIN_GET_ORG_TAGS_TREE", "token_validation",
+                        "FAILED_INVALID_TOKEN");
+                monitor.end("获取组织标签树失败：无效token");
+                throw new CustomException("无效的token", HttpStatus.UNAUTHORIZED);
+            }
+
+            // 验证用户是否为管理员
+            User admin = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND));
+
+            if (admin.getRole() != User.Role.ADMIN) {
+                LogUtils.logUserOperation(username, "ADMIN_GET_ORG_TAGS_TREE", "authorization", "FAILED_NOT_ADMIN");
+                monitor.end("获取组织标签树失败：非管理员");
+                throw new CustomException("权限不足", HttpStatus.FORBIDDEN);
+            }
+
+            LogUtils.logBusiness("ADMIN_GET_ORG_TAGS_TREE", username, "开始查询组织标签树");
+
+            // 获取所有组织标签
+            List<OrganizationTag> allTags = organizationTagRepository.findAll();
+
+            // 构建标签树
+            List<Map<String, Object>> tagTree = buildOrgTagTree(allTags);
+
+            LogUtils.logBusiness("ADMIN_GET_ORG_TAGS_TREE", username, "获取到 %d 个组织标签", allTags.size());
+            LogUtils.logUserOperation(username, "ADMIN_GET_ORG_TAGS_TREE", "org_tag_tree", "SUCCESS");
+            monitor.end("获取组织标签树成功");
+
+            // 构建统一响应格式
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "获取组织标签树成功");
+            response.put("data", tagTree);
+            return ResponseEntity.ok().body(response);
+
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_GET_ORG_TAGS_TREE", username, "获取组织标签树失败: %s", e, e.getMessage());
+            monitor.end("获取组织标签树失败: " + e.getMessage());
+            return ResponseEntity.status(e.getStatus())
+                    .body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_ORG_TAGS_TREE", username, "获取组织标签树异常: %s", e, e.getMessage());
+            monitor.end("获取组织标签树异常: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 构建组织标签树结构
+     */
+    private List<Map<String, Object>> buildOrgTagTree(List<OrganizationTag> allTags) {
+        List<Map<String, Object>> rootTags = new ArrayList<>();
+        Map<String, Map<String, Object>> tagMap = new HashMap<>();
+
+        // 先创建所有标签节点
+        for (OrganizationTag tag : allTags) {
+            Map<String, Object> tagNode = new HashMap<>();
+            tagNode.put("id", tag.getTagId());
+            tagNode.put("name", tag.getName());
+            tagNode.put("description", tag.getDescription());
+            tagNode.put("parentTag", tag.getParentTag());
+            tagNode.put("children", new ArrayList<>());
+            tagMap.put(tag.getTagId(), tagNode);
+        }
+
+        // 构建树结构
+        for (OrganizationTag tag : allTags) {
+            Map<String, Object> tagNode = tagMap.get(tag.getTagId());
+            if (tag.getParentTag() == null || tag.getParentTag().isEmpty()) {
+                // 根节点
+                rootTags.add(tagNode);
+            } else {
+                // 子节点
+                Map<String, Object> parentNode = tagMap.get(tag.getParentTag());
+                if (parentNode != null) {
+                    List<Map<String, Object>> children = (List<Map<String, Object>>) parentNode.get("children");
+                    children.add(tagNode);
+                }
+            }
+        }
+
+        return rootTags;
+    }
+}

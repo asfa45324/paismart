@@ -16,7 +16,7 @@ const previewVisible = ref(false);
 const previewFileName = ref('');
 
 function apiFn() {
-  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
+  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/accessible' });
 }
 
 function renderIcon(fileName: string) {
