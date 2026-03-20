@@ -1,0 +1,87 @@
+<script setup lang="ts">
+import { NScrollbar } from 'naive-ui';
+import { VueMarkdownItProvider } from 'vue-markdown-shiki';
+import ChatMessage from './chat-message.vue';
+
+defineOptions({
+  name: 'ChatList'
+});
+
+const chatStore = useChatStore();
+const { list } = storeToRefs(chatStore);
+
+const loading = ref(false);
+const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
+
+watch(() => [...list.value], scrollToBottom);
+
+function scrollToBottom() {
+  setTimeout(() => {
+    scrollbarRef.value?.scrollBy({
+      top: 999999999999999,
+      behavior: 'auto'
+    });
+  }, 100);
+}
+
+const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'day').valueOf()]);
+
+const params = computed(() => {
+  return {
+    start_date: dayjs(range.value[0]).format('YYYY-MM-DD'),
+    end_date: dayjs(range.value[1]).format('YYYY-MM-DD')
+  };
+});
+
+// 监听时间范围变化，重新获取聊天记录
+watch(
+  () => [...range.value],
+  () => {
+    getList();
+  }
+);
+
+async function getList() {
+  loading.value = true;
+  const { error, data } = await request<Api.Chat.Message[]>({
+    url: 'users/conversation',
+    params: params.value
+  });
+  if (!error) {
+    // 只有当列表为空时，才用服务器返回的数据替换，否则保留当前会话
+    if (list.value.length === 0) {
+      list.value = data;
+    }
+  }
+  loading.value = false;
+}
+
+onMounted(() => {
+  chatStore.scrollToBottom = scrollToBottom;
+  // 页面首次加载时获取聊天记录
+  getList();
+});
+</script>
+
+<template>
+  <Suspense>
+    <NScrollbar ref="scrollbarRef" class="h-0 flex-auto">
+      <Teleport defer to="#header-extra">
+        <div class="px-10">
+          <NForm :model="params" label-placement="left" :show-feedback="false" inline>
+            <NFormItem label="时间">
+              <NDatePicker v-model:value="range" type="daterange" />
+            </NFormItem>
+          </NForm>
+        </div>
+      </Teleport>
+      <NSpin :show="loading">
+        <VueMarkdownItProvider>
+          <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" />
+        </VueMarkdownItProvider>
+      </NSpin>
+    </NScrollbar>
+  </Suspense>
+</template>
+
+<style scoped lang="scss"></style>
