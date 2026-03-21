@@ -51,7 +51,23 @@ watch(visible, () => {
 });
 
 function onUpdate(option: unknown) {
-  if (option) model.value.orgTagName = (option as Api.OrgTag.Item).name;
+  console.log('onUpdate option:', option);
+  if (option) {
+    // 处理级联选择器的选项，获取最后一个选项的name
+    if (Array.isArray(option)) {
+      // 如果是数组，取最后一个选项
+      const lastOption = option[option.length - 1];
+      if (lastOption) {
+        console.log('lastOption:', lastOption);
+        model.value.orgTagName = lastOption.name;
+      }
+    } else {
+      // 如果是单个选项
+      console.log('single option:', option);
+      model.value.orgTagName = (option as any).name;
+    }
+  }
+  console.log('model.orgTagName:', model.value.orgTagName);
 }
 </script>
 

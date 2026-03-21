@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/v1/admin")
@@ -275,7 +276,7 @@ public class AdminController {
     }
 
     /**
-     * 获取组织标签树结构
+     * 获取组织标签树结构（用于级联选择器）
      */
     @GetMapping("/org-tags/tree")
     public ResponseEntity<?> getOrgTagsTree(@RequestHeader("Authorization") String token) {
@@ -334,6 +335,72 @@ public class AdminController {
     }
 
     /**
+     * 获取组织标签列表（用于管理页面）
+     */
+    @GetMapping("/org-tags")
+    public ResponseEntity<?> getOrgTagsList(@RequestHeader("Authorization") String token) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_GET_ORG_TAGS_LIST");
+        String username = null;
+        try {
+            // 从token中提取用户名
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "ADMIN_GET_ORG_TAGS_LIST", "token_validation", "FAILED_INVALID_TOKEN");
+                monitor.end("获取组织标签列表失败：无效token");
+                throw new CustomException("无效的token", HttpStatus.UNAUTHORIZED);
+            }
+
+            // 验证用户是否为管理员
+            User admin = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND));
+
+            if (admin.getRole() != User.Role.ADMIN) {
+                LogUtils.logUserOperation(username, "ADMIN_GET_ORG_TAGS_LIST", "authorization", "FAILED_NOT_ADMIN");
+                monitor.end("获取组织标签列表失败：非管理员");
+                throw new CustomException("权限不足", HttpStatus.FORBIDDEN);
+            }
+
+            LogUtils.logBusiness("ADMIN_GET_ORG_TAGS_LIST", username, "开始查询组织标签列表");
+
+            // 获取所有组织标签
+            List<OrganizationTag> allTags = organizationTagRepository.findAll();
+
+            // 转换为扁平列表格式
+            List<Map<String, Object>> tagList = new ArrayList<>();
+            for (OrganizationTag tag : allTags) {
+                Map<String, Object> tagMap = new HashMap<>();
+                tagMap.put("tagId", tag.getTagId());
+                tagMap.put("name", tag.getName());
+                tagMap.put("description", tag.getDescription());
+                tagMap.put("parentTag", tag.getParentTag());
+                tagList.add(tagMap);
+            }
+
+            LogUtils.logBusiness("ADMIN_GET_ORG_TAGS_LIST", username, "获取到 %d 个组织标签", tagList.size());
+            LogUtils.logUserOperation(username, "ADMIN_GET_ORG_TAGS_LIST", "org_tag_list", "SUCCESS");
+            monitor.end("获取组织标签列表成功");
+
+            // 构建统一响应格式
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "获取组织标签列表成功");
+            response.put("data", tagList);
+            return ResponseEntity.ok().body(response);
+
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_GET_ORG_TAGS_LIST", username, "获取组织标签列表失败: %s", e, e.getMessage());
+            monitor.end("获取组织标签列表失败: " + e.getMessage());
+            return ResponseEntity.status(e.getStatus())
+                    .body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_ORG_TAGS_LIST", username, "获取组织标签列表异常: %s", e, e.getMessage());
+            monitor.end("获取组织标签列表异常: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
+        }
+    }
+
+    /**
      * 构建组织标签树结构
      */
     private List<Map<String, Object>> buildOrgTagTree(List<OrganizationTag> allTags) {
@@ -344,6 +411,7 @@ public class AdminController {
         for (OrganizationTag tag : allTags) {
             Map<String, Object> tagNode = new HashMap<>();
             tagNode.put("id", tag.getTagId());
+            tagNode.put("tagId", tag.getTagId());
             tagNode.put("name", tag.getName());
             tagNode.put("description", tag.getDescription());
             tagNode.put("parentTag", tag.getParentTag());
@@ -368,5 +436,249 @@ public class AdminController {
         }
 
         return rootTags;
+    }
+
+    /**
+     * 新增组织标签
+     */
+    @PostMapping("/org-tags")
+    public ResponseEntity<?> createOrgTag(
+            @RequestHeader("Authorization") String token,
+            @RequestBody OrganizationTag orgTagRequest) {
+        
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_CREATE_ORG_TAG");
+        String username = null;
+        User admin = null;
+        try {
+            // 从token中提取用户名
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "ADMIN_CREATE_ORG_TAG", "token_validation", "FAILED_INVALID_TOKEN");
+                monitor.end("创建组织标签失败：无效token");
+                throw new CustomException("无效的token", HttpStatus.UNAUTHORIZED);
+            }
+
+            // 验证用户是否为管理员
+            Optional<User> adminOpt = userRepository.findByUsername(username);
+            if (adminOpt.isEmpty()) {
+                LogUtils.logUserOperation(username, "ADMIN_CREATE_ORG_TAG", "user_validation", "FAILED_USER_NOT_FOUND");
+                monitor.end("创建组织标签失败：用户不存在");
+                throw new CustomException("用户不存在", HttpStatus.NOT_FOUND);
+            }
+            admin = adminOpt.get();
+
+            if (admin.getRole() != User.Role.ADMIN) {
+                LogUtils.logUserOperation(username, "ADMIN_CREATE_ORG_TAG", "authorization", "FAILED_NOT_ADMIN");
+                monitor.end("创建组织标签失败：非管理员");
+                throw new CustomException("权限不足", HttpStatus.FORBIDDEN);
+            }
+
+            LogUtils.logBusiness("ADMIN_CREATE_ORG_TAG", username, "开始创建组织标签: tagId=%s", orgTagRequest.getTagId());
+
+            // 验证tagId是否已存在
+            if (organizationTagRepository.existsByTagId(orgTagRequest.getTagId())) {
+                LogUtils.logUserOperation(username, "ADMIN_CREATE_ORG_TAG", orgTagRequest.getTagId(), "FAILED_TAG_EXISTS");
+                monitor.end("创建组织标签失败：标签ID已存在");
+                throw new CustomException("标签ID已存在", HttpStatus.BAD_REQUEST);
+            }
+
+            // 验证父标签是否存在（如果指定了父标签）
+            if (orgTagRequest.getParentTag() != null && !orgTagRequest.getParentTag().isEmpty()) {
+                if (!organizationTagRepository.existsByTagId(orgTagRequest.getParentTag())) {
+                    LogUtils.logUserOperation(username, "ADMIN_CREATE_ORG_TAG", orgTagRequest.getTagId(), "FAILED_PARENT_TAG_NOT_EXISTS");
+                    monitor.end("创建组织标签失败：父标签不存在");
+                    throw new CustomException("父标签不存在", HttpStatus.BAD_REQUEST);
+                }
+            }
+
+            // 创建新的组织标签
+            OrganizationTag newOrgTag = new OrganizationTag();
+            newOrgTag.setTagId(orgTagRequest.getTagId());
+            newOrgTag.setName(orgTagRequest.getName());
+            newOrgTag.setDescription(orgTagRequest.getDescription());
+            newOrgTag.setParentTag(orgTagRequest.getParentTag());
+            newOrgTag.setCreatedBy(admin);
+
+            organizationTagRepository.save(newOrgTag);
+
+            LogUtils.logUserOperation(username, "ADMIN_CREATE_ORG_TAG", orgTagRequest.getTagId(), "SUCCESS");
+            monitor.end("创建组织标签成功");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "创建组织标签成功");
+            return ResponseEntity.ok().body(response);
+
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_CREATE_ORG_TAG", username, "创建组织标签失败: %s", e, e.getMessage());
+            monitor.end("创建组织标签失败: " + e.getMessage());
+            return ResponseEntity.status(e.getStatus())
+                    .body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_CREATE_ORG_TAG", username, "创建组织标签异常: %s", e, e.getMessage());
+            monitor.end("创建组织标签异常: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 编辑组织标签
+     */
+    @PutMapping("/org-tags/{tagId}")
+    public ResponseEntity<?> updateOrgTag(
+            @RequestHeader("Authorization") String token,
+            @PathVariable String tagId,
+            @RequestBody OrganizationTag orgTagRequest) {
+        
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_UPDATE_ORG_TAG");
+        String username = null;
+        try {
+            // 从token中提取用户名
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "ADMIN_UPDATE_ORG_TAG", "token_validation", "FAILED_INVALID_TOKEN");
+                monitor.end("更新组织标签失败：无效token");
+                throw new CustomException("无效的token", HttpStatus.UNAUTHORIZED);
+            }
+
+            // 验证用户是否为管理员
+            Optional<User> adminOpt = userRepository.findByUsername(username);
+            if (adminOpt.isEmpty()) {
+                LogUtils.logUserOperation(username, "ADMIN_UPDATE_ORG_TAG", "user_validation", "FAILED_USER_NOT_FOUND");
+                monitor.end("更新组织标签失败：用户不存在");
+                throw new CustomException("用户不存在", HttpStatus.NOT_FOUND);
+            }
+            User admin = adminOpt.get();
+
+            if (admin.getRole() != User.Role.ADMIN) {
+                LogUtils.logUserOperation(username, "ADMIN_UPDATE_ORG_TAG", "authorization", "FAILED_NOT_ADMIN");
+                monitor.end("更新组织标签失败：非管理员");
+                throw new CustomException("权限不足", HttpStatus.FORBIDDEN);
+            }
+
+            LogUtils.logBusiness("ADMIN_UPDATE_ORG_TAG", username, "开始更新组织标签: tagId=%s", tagId);
+
+            // 查找组织标签
+            Optional<OrganizationTag> orgTagOpt = organizationTagRepository.findByTagId(tagId);
+            if (orgTagOpt.isEmpty()) {
+                LogUtils.logUserOperation(username, "ADMIN_UPDATE_ORG_TAG", tagId, "FAILED_TAG_NOT_FOUND");
+                monitor.end("更新组织标签失败：标签不存在");
+                throw new CustomException("标签不存在", HttpStatus.NOT_FOUND);
+            }
+            OrganizationTag orgTag = orgTagOpt.get();
+
+            // 验证父标签是否存在（如果指定了父标签）
+            if (orgTagRequest.getParentTag() != null && !orgTagRequest.getParentTag().isEmpty()) {
+                if (!organizationTagRepository.existsByTagId(orgTagRequest.getParentTag())) {
+                    LogUtils.logUserOperation(username, "ADMIN_UPDATE_ORG_TAG", tagId, "FAILED_PARENT_TAG_NOT_EXISTS");
+                    monitor.end("更新组织标签失败：父标签不存在");
+                    throw new CustomException("父标签不存在", HttpStatus.BAD_REQUEST);
+                }
+            }
+
+            // 更新组织标签信息
+            orgTag.setName(orgTagRequest.getName());
+            orgTag.setDescription(orgTagRequest.getDescription());
+            orgTag.setParentTag(orgTagRequest.getParentTag());
+
+            organizationTagRepository.save(orgTag);
+
+            LogUtils.logUserOperation(username, "ADMIN_UPDATE_ORG_TAG", tagId, "SUCCESS");
+            monitor.end("更新组织标签成功");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "更新组织标签成功");
+            return ResponseEntity.ok().body(response);
+
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_ORG_TAG", username, "更新组织标签失败: %s", e, e.getMessage());
+            monitor.end("更新组织标签失败: " + e.getMessage());
+            return ResponseEntity.status(e.getStatus())
+                    .body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_ORG_TAG", username, "更新组织标签异常: %s", e, e.getMessage());
+            monitor.end("更新组织标签异常: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 删除组织标签
+     */
+    @DeleteMapping("/org-tags/{tagId}")
+    public ResponseEntity<?> deleteOrgTag(
+            @RequestHeader("Authorization") String token,
+            @PathVariable String tagId) {
+        
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_DELETE_ORG_TAG");
+        String username = null;
+        try {
+            // 从token中提取用户名
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "ADMIN_DELETE_ORG_TAG", "token_validation", "FAILED_INVALID_TOKEN");
+                monitor.end("删除组织标签失败：无效token");
+                throw new CustomException("无效的token", HttpStatus.UNAUTHORIZED);
+            }
+
+            // 验证用户是否为管理员
+            Optional<User> adminOpt = userRepository.findByUsername(username);
+            if (adminOpt.isEmpty()) {
+                LogUtils.logUserOperation(username, "ADMIN_DELETE_ORG_TAG", "user_validation", "FAILED_USER_NOT_FOUND");
+                monitor.end("删除组织标签失败：用户不存在");
+                throw new CustomException("用户不存在", HttpStatus.NOT_FOUND);
+            }
+            User admin = adminOpt.get();
+
+            if (admin.getRole() != User.Role.ADMIN) {
+                LogUtils.logUserOperation(username, "ADMIN_DELETE_ORG_TAG", "authorization", "FAILED_NOT_ADMIN");
+                monitor.end("删除组织标签失败：非管理员");
+                throw new CustomException("权限不足", HttpStatus.FORBIDDEN);
+            }
+
+            LogUtils.logBusiness("ADMIN_DELETE_ORG_TAG", username, "开始删除组织标签: tagId=%s", tagId);
+
+            // 查找组织标签
+            Optional<OrganizationTag> orgTagOpt = organizationTagRepository.findByTagId(tagId);
+            if (orgTagOpt.isEmpty()) {
+                LogUtils.logUserOperation(username, "ADMIN_DELETE_ORG_TAG", tagId, "FAILED_TAG_NOT_FOUND");
+                monitor.end("删除组织标签失败：标签不存在");
+                throw new CustomException("标签不存在", HttpStatus.NOT_FOUND);
+            }
+            OrganizationTag orgTag = orgTagOpt.get();
+
+            // 检查是否有子标签
+            List<OrganizationTag> childTags = organizationTagRepository.findByParentTag(tagId);
+            if (!childTags.isEmpty()) {
+                LogUtils.logUserOperation(username, "ADMIN_DELETE_ORG_TAG", tagId, "FAILED_HAS_CHILDREN");
+                monitor.end("删除组织标签失败：存在子标签");
+                throw new CustomException("存在子标签，无法删除", HttpStatus.BAD_REQUEST);
+            }
+
+            // 删除组织标签
+            organizationTagRepository.delete(orgTag);
+
+            LogUtils.logUserOperation(username, "ADMIN_DELETE_ORG_TAG", tagId, "SUCCESS");
+            monitor.end("删除组织标签成功");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "删除组织标签成功");
+            return ResponseEntity.ok().body(response);
+
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_DELETE_ORG_TAG", username, "删除组织标签失败: %s", e, e.getMessage());
+            monitor.end("删除组织标签失败: " + e.getMessage());
+            return ResponseEntity.status(e.getStatus())
+                    .body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_DELETE_ORG_TAG", username, "删除组织标签异常: %s", e, e.getMessage());
+            monitor.end("删除组织标签异常: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
+        }
     }
 }

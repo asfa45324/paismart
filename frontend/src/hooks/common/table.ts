@@ -38,6 +38,40 @@ export function useTable<A extends NaiveUI.TableApiFn>(config: NaiveUI.NaiveTabl
     apiParams,
     columns: config.columns,
     transformer: res => {
+      // 处理后端直接返回数组的情况
+      if (Array.isArray(res.data)) {
+        const records = res.data.map(item => {
+          // 转换 orgTags 格式
+          const orgTags = item.orgTags ? item.orgTags.split(',').map(tag => ({
+            tagId: tag,
+            name: tag
+          })) : [];
+          
+          // 转换字段名和添加缺少的字段
+          return {
+            ...item,
+            createTime: item.createdAt,
+            lastLoginTime: item.updatedAt,
+            email: '', // 后端没有返回，使用空字符串
+            status: 1, // 后端没有返回，默认设置为启用
+            orgTags: orgTags
+          };
+        });
+        
+        return {
+          data: records.map((item, index) => {
+            return {
+              ...item,
+              index: index + 1
+            };
+          }),
+          pageNum: 1,
+          pageSize: records.length,
+          total: records.length
+        };
+      }
+      
+      // 原有的处理逻辑
       const { number = 1, size = 10, totalElements = 0 } = res.data || {};
       const records = res.data?.data || res.data?.content || [];
       // Ensure that the size is greater than 0, If it is less than 0, it will cause paging calculation errors.
