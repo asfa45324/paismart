@@ -133,15 +133,6 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
-    name: 'resume-analysis',
-    path: '/resume-analysis',
-    component: 'layout.base$view.resume-analysis',
-    meta: {
-      title: 'resume-analysis',
-      i18nKey: 'route.resume-analysis'
-    }
-  },
-  {
     name: 'user',
     path: '/user',
     component: 'layout.base$view.user',

@@ -4,6 +4,9 @@ import com.yizhaoqi.smartpai.model.ChunkInfo;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.repository.ChunkInfoRepository;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
+import com.aliyun.oss.OSS;
+import com.aliyun.oss.OSSClientBuilder;
+import com.aliyun.oss.model.*;
 import io.minio.*;
 import io.minio.http.Method;
 import org.apache.commons.codec.digest.DigestUtils;
@@ -14,6 +17,7 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import javax.annotation.PostConstruct;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -36,6 +40,16 @@ public class UploadService {
     @Autowired
     private MinioClient minioClient;
 
+    // 用于与阿里云 OSS 交互
+    @Autowired
+    private OSS ossClient;
+
+    @Autowired
+    private String ossBucketName;
+
+    @Autowired
+    private String ossEndpoint;
+
     // 用于操作文件上传记录的 Repository
     @Autowired
     private FileUploadRepository fileUploadRepository;
@@ -46,6 +60,29 @@ public class UploadService {
 
     @Autowired
     private String minioPublicUrl; // 注入 MinIO 的公共访问地址
+
+    // 存储服务类型：oss 或 minio
+    private final String storageService = "oss"; // 默认使用阿里云 OSS
+    
+    // 初始化时检查并创建OSS bucket
+    @PostConstruct
+    public void init() {
+        if ("oss".equals(storageService)) {
+            try {
+                // 检查bucket是否存在
+                boolean exists = ossClient.doesBucketExist(ossBucketName);
+                if (!exists) {
+                    // 创建bucket
+                    ossClient.createBucket(ossBucketName);
+                    logger.info("OSS bucket创建成功: {}", ossBucketName);
+                } else {
+                    logger.info("OSS bucket已存在: {}", ossBucketName);
+                }
+            } catch (Exception e) {
+                logger.error("OSS bucket检查或创建失败: {}", e.getMessage(), e);
+            }
+        }
+    }
 
     /**
      * 上传文件分片
@@ -168,32 +205,32 @@ public class UploadService {
                 logger.debug("构建分片存储路径 => fileName: {}, path: {}", fileName, storagePath);
 
                 try {
-                    // 存储到 MinIO
-                    logger.info("开始上传分片到MinIO => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}, bucket: uploads, path: {}, size: {}, contentType: {}", 
-                              fileMd5, fileName, fileType, chunkIndex, storagePath, file.getSize(), contentType);
-                    
-                    PutObjectArgs putObjectArgs = PutObjectArgs.builder()
-                            .bucket("uploads")
-                            .object(storagePath)
-                            .stream(file.getInputStream(), file.getSize(), -1)
-                            .contentType(file.getContentType())
-                            .build();
-                    
-                    minioClient.putObject(putObjectArgs);
-                    logger.info("分片上传到MinIO成功 => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}", fileMd5, fileName, fileType, chunkIndex);
-                } catch (Exception e) {
-                    logger.error("分片上传到MinIO失败 => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}, 错误类型: {}, 错误信息: {}", 
-                              fileMd5, fileName, fileType, chunkIndex, e.getClass().getName(), e.getMessage(), e);
-                    
-                    // 详细记录不同类型的MinIO错误
-                    if (e instanceof io.minio.errors.ErrorResponseException) {
-                        io.minio.errors.ErrorResponseException ere = (io.minio.errors.ErrorResponseException) e;
-                        logger.error("MinIO错误响应详情 => fileName: {}, code: {}, message: {}, resource: {}, requestId: {}", 
-                                 fileName, ere.errorResponse().code(), ere.errorResponse().message(), 
-                                 ere.errorResponse().resource(), ere.errorResponse().requestId());
+                    if ("oss".equals(storageService)) {
+                        // 存储到阿里云 OSS
+                        logger.info("开始上传分片到OSS => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}, bucket: {}, path: {}, size: {}, contentType: {}", 
+                                  fileMd5, fileName, fileType, chunkIndex, ossBucketName, storagePath, file.getSize(), contentType);
+                        
+                        ossClient.putObject(ossBucketName, storagePath, file.getInputStream());
+                        logger.info("分片上传到OSS成功 => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}", fileMd5, fileName, fileType, chunkIndex);
+                    } else {
+                        // 存储到 MinIO
+                        logger.info("开始上传分片到MinIO => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}, bucket: uploads, path: {}, size: {}, contentType: {}", 
+                                  fileMd5, fileName, fileType, chunkIndex, storagePath, file.getSize(), contentType);
+                        
+                        PutObjectArgs putObjectArgs = PutObjectArgs.builder()
+                                .bucket("uploads")
+                                .object(storagePath)
+                                .stream(file.getInputStream(), file.getSize(), -1)
+                                .contentType(file.getContentType())
+                                .build();
+                        
+                        minioClient.putObject(putObjectArgs);
+                        logger.info("分片上传到MinIO成功 => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}", fileMd5, fileName, fileType, chunkIndex);
                     }
-                    
-                    throw new RuntimeException("上传分片到MinIO失败: " + e.getMessage(), e);
+                } catch (Exception e) {
+                    logger.error("分片上传失败 => fileMd5: {}, fileName: {}, fileType: {}, chunkIndex: {}, 存储服务: {}, 错误类型: {}, 错误信息: {}", 
+                              fileMd5, fileName, fileType, chunkIndex, storageService, e.getClass().getName(), e.getMessage(), e);
+                    throw new RuntimeException("上传分片到" + storageService + "失败: " + e.getMessage(), e);
                 }
 
                 // 标记分片已上传
@@ -561,16 +598,23 @@ public class UploadService {
             for (int i = 0; i < partPaths.size(); i++) {
                 String path = partPaths.get(i);
                 try {
-                    StatObjectResponse stat = minioClient.statObject(
-                        StatObjectArgs.builder()
-                            .bucket("uploads")
-                            .object(path)
-                            .build()
-                    );
-                    logger.debug("分片存在 => fileName: {}, index: {}, path: {}, size: {}", fileName, i, path, stat.size());
+                    if ("oss".equals(storageService)) {
+                        // 检查 OSS 中的分片
+                        ossClient.getObjectMetadata(ossBucketName, path);
+                        logger.debug("分片存在 => fileName: {}, index: {}, path: {}", fileName, i, path);
+                    } else {
+                        // 检查 MinIO 中的分片
+                        StatObjectResponse stat = minioClient.statObject(
+                            StatObjectArgs.builder()
+                                .bucket("uploads")
+                                .object(path)
+                                .build()
+                        );
+                        logger.debug("分片存在 => fileName: {}, index: {}, path: {}, size: {}", fileName, i, path, stat.size());
+                    }
                 } catch (Exception e) {
-                    logger.error("分片不存在或无法访问 => fileName: {}, index: {}, path: {}, 错误: {}", 
-                              fileName, i, path, e.getMessage(), e);
+                    logger.error("分片不存在或无法访问 => fileName: {}, index: {}, path: {}, 存储服务: {}, 错误: {}", 
+                              fileName, i, path, storageService, e.getMessage(), e);
                     throw new RuntimeException("分片 " + i + " 不存在或无法访问: " + e.getMessage(), e);
                 }
             }
@@ -579,47 +623,106 @@ public class UploadService {
             String mergedPath = "merged/" + fileName;
             logger.info("开始合并分片 => fileMd5: {}, fileName: {}, fileType: {}, 合并后路径: {}", fileMd5, fileName, fileType, mergedPath);
             
+            String objectUrl = null;
             try {
-                // 合并分片
-                List<ComposeSource> sources = partPaths.stream()
-                        .map(path -> ComposeSource.builder().bucket("uploads").object(path).build())
-                        .collect(Collectors.toList());
-                
-                logger.debug("构建合并请求 => fileMd5: {}, fileName: {}, targetPath: {}, sourcePaths: {}", 
-                          fileMd5, fileName, mergedPath, partPaths);
-                
-                minioClient.composeObject(
-                        ComposeObjectArgs.builder()
-                                .bucket("uploads")
-                                .object(mergedPath)
-                                .sources(sources)
-                                .build()
-                );
-                logger.info("分片合并成功 => fileMd5: {}, fileName: {}, fileType: {}, mergedPath: {}", fileMd5, fileName, fileType, mergedPath);
-                
-                // 检查合并后的文件
-                StatObjectResponse stat = minioClient.statObject(
-                    StatObjectArgs.builder()
-                        .bucket("uploads")
-                        .object(mergedPath)
-                        .build()
-                );
-                logger.info("合并文件信息 => fileMd5: {}, fileName: {}, fileType: {}, path: {}, size: {}", fileMd5, fileName, fileType, mergedPath, stat.size());
+                if ("oss".equals(storageService)) {
+                    // 使用 OSS 合并分片
+                    logger.info("使用OSS合并分片 => fileMd5: {}, fileName: {}, mergedPath: {}", fileMd5, fileName, mergedPath);
+                    
+                    // 初始化分片上传
+                    InitiateMultipartUploadRequest initiateRequest = new InitiateMultipartUploadRequest(ossBucketName, mergedPath);
+                    InitiateMultipartUploadResult initiateResult = ossClient.initiateMultipartUpload(initiateRequest);
+                    String uploadId = initiateResult.getUploadId();
+                    
+                    try {
+                        // 上传分片
+                        List<PartETag> partETags = new ArrayList<>();
+                        for (int i = 0; i < partPaths.size(); i++) {
+                            String partPath = partPaths.get(i);
+                            UploadPartRequest uploadPartRequest = new UploadPartRequest();
+                            uploadPartRequest.setBucketName(ossBucketName);
+                            uploadPartRequest.setKey(mergedPath);
+                            uploadPartRequest.setUploadId(uploadId);
+                            uploadPartRequest.setPartNumber(i + 1);
+                            uploadPartRequest.setPartSize(ossClient.getObjectMetadata(ossBucketName, partPath).getContentLength());
+                            uploadPartRequest.setInputStream(ossClient.getObject(ossBucketName, partPath).getObjectContent());
+                            
+                            UploadPartResult uploadPartResult = ossClient.uploadPart(uploadPartRequest);
+                            partETags.add(uploadPartResult.getPartETag());
+                            logger.debug("上传分片到OSS合并任务 => fileName: {}, partIndex: {}, partNumber: {}", fileName, i, i + 1);
+                        }
+                        
+                        // 完成分片上传
+                        CompleteMultipartUploadRequest completeRequest = new CompleteMultipartUploadRequest(ossBucketName, mergedPath, uploadId, partETags);
+                        ossClient.completeMultipartUpload(completeRequest);
+                        logger.info("OSS分片合并成功 => fileMd5: {}, fileName: {}, mergedPath: {}", fileMd5, fileName, mergedPath);
+                        
+                        // 生成访问URL
+                        objectUrl = "https://" + ossBucketName + ".oss-cn-beijing.aliyuncs.com/" + mergedPath;
+                        logger.info("OSS文件访问URL生成 => fileMd5: {}, fileName: {}, URL: {}", fileMd5, fileName, objectUrl);
+                    } catch (Exception e) {
+                        // 发生错误时取消分片上传
+                        AbortMultipartUploadRequest abortRequest = new AbortMultipartUploadRequest(ossBucketName, mergedPath, uploadId);
+                        ossClient.abortMultipartUpload(abortRequest);
+                        throw e;
+                    }
+                } else {
+                    // 使用 MinIO 合并分片
+                    List<ComposeSource> sources = partPaths.stream()
+                            .map(path -> ComposeSource.builder().bucket("uploads").object(path).build())
+                            .collect(Collectors.toList());
+                    
+                    logger.debug("构建合并请求 => fileMd5: {}, fileName: {}, targetPath: {}, sourcePaths: {}", 
+                              fileMd5, fileName, mergedPath, partPaths);
+                    
+                    minioClient.composeObject(
+                            ComposeObjectArgs.builder()
+                                    .bucket("uploads")
+                                    .object(mergedPath)
+                                    .sources(sources)
+                                    .build()
+                    );
+                    logger.info("MinIO分片合并成功 => fileMd5: {}, fileName: {}, mergedPath: {}", fileMd5, fileName, mergedPath);
+                    
+                    // 检查合并后的文件
+                    StatObjectResponse stat = minioClient.statObject(
+                        StatObjectArgs.builder()
+                            .bucket("uploads")
+                            .object(mergedPath)
+                            .build()
+                    );
+                    logger.info("合并文件信息 => fileMd5: {}, fileName: {}, fileType: {}, path: {}, size: {}", fileMd5, fileName, fileType, mergedPath, stat.size());
 
+                    // 生成预签名 URL（有效期为 1 小时）
+                    objectUrl = minioClient.getPresignedObjectUrl(
+                            GetPresignedObjectUrlArgs.builder()
+                                    .method(Method.GET)
+                                    .bucket("uploads")
+                                    .object(mergedPath)
+                                    .expiry(1, TimeUnit.HOURS) // 设置有效期为 1 小时
+                                    .build()
+                    );
+                    logger.info("MinIO预签名URL已生成 => fileMd5: {}, fileName: {}, fileType: {}, URL: {}", fileMd5, fileName, fileType, objectUrl);
+                }
+                
                 // 清理分片文件
                 logger.info("开始清理分片文件 => fileMd5: {}, fileName: {}, 分片数量: {}", fileMd5, fileName, partPaths.size());
                 for (String path : partPaths) {
                     try {
-                        minioClient.removeObject(
-                                RemoveObjectArgs.builder()
-                                        .bucket("uploads")
-                                        .object(path)
-                                        .build()
-                        );
+                        if ("oss".equals(storageService)) {
+                            ossClient.deleteObject(ossBucketName, path);
+                        } else {
+                            minioClient.removeObject(
+                                    RemoveObjectArgs.builder()
+                                            .bucket("uploads")
+                                            .object(path)
+                                            .build()
+                            );
+                        }
                         logger.debug("分片文件已删除 => fileName: {}, path: {}", fileName, path);
                     } catch (Exception e) {
                         // 记录错误但不中断流程
-                        logger.warn("删除分片文件失败，将继续处理 => fileName: {}, path: {}, 错误: {}", fileName, path, e.getMessage());
+                        logger.warn("删除分片文件失败，将继续处理 => fileName: {}, path: {}, 存储服务: {}, 错误: {}", fileName, path, storageService, e.getMessage());
                     }
                 }
                 logger.info("分片文件清理完成 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);
@@ -641,22 +744,10 @@ public class UploadService {
                 fileUploadRepository.save(fileUpload);
                 logger.info("文件状态已更新为已完成 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);
 
-                // 生成预签名 URL（有效期为 1 小时）
-                logger.info("开始生成预签名URL => fileMd5: {}, fileName: {}, path: {}", fileMd5, fileName, mergedPath);
-                String presignedUrl = minioClient.getPresignedObjectUrl(
-                        GetPresignedObjectUrlArgs.builder()
-                                .method(Method.GET)
-                                .bucket("uploads")
-                                .object(mergedPath)
-                                .expiry(1, TimeUnit.HOURS) // 设置有效期为 1 小时
-                                .build()
-                );
-                logger.info("预签名URL已生成 => fileMd5: {}, fileName: {}, fileType: {}, URL: {}", fileMd5, fileName, fileType, presignedUrl);
-                
-                return presignedUrl;
+                return objectUrl;
             } catch (Exception e) {
-                logger.error("合并文件失败 => fileMd5: {}, fileName: {}, fileType: {}, 错误类型: {}, 错误信息: {}", 
-                          fileMd5, fileName, fileType, e.getClass().getName(), e.getMessage(), e);
+                logger.error("合并文件失败 => fileMd5: {}, fileName: {}, fileType: {}, 存储服务: {}, 错误类型: {}, 错误信息: {}", 
+                          fileMd5, fileName, fileType, storageService, e.getClass().getName(), e.getMessage(), e);
                 throw new RuntimeException("合并文件失败: " + e.getMessage(), e);
             }
         } catch (Exception e) {

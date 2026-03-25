@@ -503,6 +503,154 @@ public class DocumentController {
     }
 
     /**
+     * 获取文件预览链接（用于在浏览器中直接预览，如PDF）
+     * 
+     * @param fileName 文件名
+     * @param token    JWT token (URL参数，用于向后兼容)
+     * @return 文件预览链接或错误响应
+     */
+    @GetMapping("/preview-url")
+    public ResponseEntity<?> getPreviewUrl(
+            @RequestParam String fileName,
+            @RequestParam(required = false) String token,
+            HttpServletRequest request) {
+
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_PREVIEW_URL");
+        try {
+            // 验证token并获取用户信息
+            String userId = null;
+            String orgTags = null;
+
+            // 优先从Spring Security上下文获取已认证的用户信息
+            try {
+                var authentication = SecurityContextHolder.getContext().getAuthentication();
+                if (authentication != null && authentication.isAuthenticated()
+                        && authentication.getPrincipal() instanceof UserDetails) {
+                    UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+                    // 从token中提取用户ID
+                    String headerToken = extractTokenFromRequest(request);
+                    if (headerToken != null) {
+                        userId = jwtUtils.extractUserIdFromToken(headerToken);
+                        orgTags = jwtUtils.extractOrgTagsFromToken(headerToken);
+                    } else if (token != null && !token.trim().isEmpty()) {
+                        // 如果URL参数中有token，使用它
+                        userId = jwtUtils.extractUserIdFromToken(token);
+                        orgTags = jwtUtils.extractOrgTagsFromToken(token);
+                    } else {
+                        // 如果没有token，使用用户名
+                        userId = userDetails.getUsername();
+                    }
+                }
+            } catch (Exception e) {
+                LogUtils.logBusiness("GET_PREVIEW_URL", "anonymous", "Security上下文获取失败: fileName=%s", fileName);
+            }
+
+            // 如果Security上下文中没有用户信息，尝试从URL参数token中获取
+            if (userId == null && token != null && !token.trim().isEmpty()) {
+                try {
+                    userId = jwtUtils.extractUsernameFromToken(token);
+                    orgTags = jwtUtils.extractOrgTagsFromToken(token);
+                } catch (Exception e) {
+                    LogUtils.logBusiness("GET_PREVIEW_URL", "anonymous", "Token解析失败: fileName=%s", fileName);
+                }
+            }
+
+            LogUtils.logBusiness("GET_PREVIEW_URL", userId != null ? userId : "anonymous",
+                    "接收到文件预览链接请求: fileName=%s", fileName);
+
+            // 如果没有提供token或token无效，只允许预览公开文件
+            if (userId == null) {
+                Optional<FileUpload> publicFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
+                if (publicFile.isEmpty()) {
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("code", HttpStatus.NOT_FOUND.value());
+                    response.put("message", "文件不存在或需要登录访问");
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+                }
+
+                FileUpload file = publicFile.get();
+                String previewUrl = documentService.generatePreviewUrl(file.getFileMd5());
+
+                if (previewUrl == null) {
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+                    response.put("message", "无法生成文件预览链接");
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+                }
+
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", 200);
+                response.put("message", "文件预览链接生成成功");
+                response.put("data", Map.of(
+                        "fileName", file.getFileName(),
+                        "previewUrl", previewUrl,
+                        "fileSize", file.getTotalSize()));
+                return ResponseEntity.ok(response);
+            }
+
+            // 有token的情况，查找用户可访问的文件
+            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, orgTags);
+
+            // 根据文件名查找匹配的文件
+            Optional<FileUpload> targetFile = accessibleFiles.stream()
+                    .filter(file -> file.getFileName().equals(fileName))
+                    .findFirst();
+
+            if (targetFile.isEmpty()) {
+                LogUtils.logUserOperation(userId, "GET_PREVIEW_URL", fileName, "FAILED_NOT_FOUND");
+                monitor.end("预览链接生成失败：文件不存在或无权限访问");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.NOT_FOUND.value());
+                response.put("message", "文件不存在或无权限访问");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+
+            FileUpload file = targetFile.get();
+
+            // 生成文件预览链接
+            String previewUrl = documentService.generatePreviewUrl(file.getFileMd5());
+
+            if (previewUrl == null) {
+                LogUtils.logUserOperation(userId, "GET_PREVIEW_URL", fileName, "FAILED_GENERATE_URL");
+                monitor.end("预览链接生成失败：无法生成预览链接");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+                response.put("message", "无法生成文件预览链接");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            }
+
+            LogUtils.logFileOperation(userId, "PREVIEW_URL", file.getFileName(), file.getFileMd5(), "SUCCESS");
+            LogUtils.logUserOperation(userId, "GET_PREVIEW_URL", fileName, "SUCCESS");
+            monitor.end("文件预览链接生成成功");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "文件预览链接生成成功");
+            response.put("data", Map.of(
+                    "fileName", file.getFileName(),
+                    "previewUrl", previewUrl,
+                    "fileSize", file.getTotalSize()));
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            String userId = "unknown";
+            try {
+                if (token != null && !token.trim().isEmpty()) {
+                    userId = jwtUtils.extractUsernameFromToken(token);
+                }
+            } catch (Exception ignored) {
+            }
+
+            LogUtils.logBusinessError("GET_PREVIEW_URL", userId, "文件预览链接生成失败: fileName=%s", e, fileName);
+            monitor.end("预览链接生成失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+            response.put("message", "文件预览链接生成失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
      * 从请求头中提取JWT token
      */
     private String extractTokenFromRequest(HttpServletRequest request) {

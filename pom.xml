@@ -173,6 +173,20 @@
             <artifactId>hanlp</artifactId>
             <version>portable-1.8.6</version>
         </dependency>
+        
+        <!-- Aliyun OSS SDK -->
+        <dependency>
+            <groupId>com.aliyun.oss</groupId>
+            <artifactId>aliyun-sdk-oss</artifactId>
+            <version>3.17.1</version>
+        </dependency>
+        
+        <!-- javax.annotation-api for @PostConstruct -->
+        <dependency>
+            <groupId>javax.annotation</groupId>
+            <artifactId>javax.annotation-api</artifactId>
+            <version>1.3.2</version>
+        </dependency>
 
     </dependencies>
 

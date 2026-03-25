@@ -1,5 +1,8 @@
 package com.yizhaoqi.smartpai.service;
 
+import com.aliyun.oss.OSS;
+import com.aliyun.oss.model.GetObjectRequest;
+import com.aliyun.oss.model.OSSObject;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.DocumentVectorRepository;
@@ -50,12 +53,22 @@ public class DocumentService {
     @Autowired
     private UserRepository userRepository;
 
+    // 用于与阿里云 OSS 交互
+    @Autowired
+    private OSS ossClient;
+
+    @Autowired
+    private String ossBucketName;
+
+    // 存储服务类型：oss 或 minio
+    private final String storageService = "oss"; // 默认使用阿里云 OSS
+
     /**
      * 删除文档及其相关数据
      * 该方法将删除:
      * 1. FileUpload记录
      * 2. DocumentVector记录
-     * 3. MinIO中的文件
+     * 3. 存储服务中的文件
      * 4. Elasticsearch中的向量数据
      *
      * @param fileMd5 文件MD5
@@ -78,17 +91,24 @@ public class DocumentService {
                 // 继续删除其他数据
             }
 
-            // 2. 删除MinIO中的文件
+            // 2. 删除存储服务中的文件
             try {
                 String objectName = "merged/" + fileUpload.getFileName();
-                minioClient.removeObject(
-                        RemoveObjectArgs.builder()
-                                .bucket("uploads")
-                                .object(objectName)
-                                .build());
-                logger.info("成功从MinIO删除文件: {}", objectName);
+                if ("oss".equals(storageService)) {
+                    // 从OSS删除文件
+                    ossClient.deleteObject(ossBucketName, objectName);
+                    logger.info("成功从OSS删除文件: {}", objectName);
+                } else {
+                    // 从MinIO删除文件
+                    minioClient.removeObject(
+                            RemoveObjectArgs.builder()
+                                    .bucket("uploads")
+                                    .object(objectName)
+                                    .build());
+                    logger.info("成功从MinIO删除文件: {}", objectName);
+                }
             } catch (Exception e) {
-                logger.error("从MinIO删除文件时出错: {}", fileMd5, e);
+                logger.error("从存储服务删除文件时出错: {}", fileMd5, e);
                 // 继续删除其他数据
             }
 
@@ -196,23 +216,87 @@ public class DocumentService {
             FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
 
-            // MinIO中的对象路径格式: merged/文件名
+            // 对象路径格式: merged/文件名
             String objectName = "merged/" + fileUpload.getFileName();
 
-            // 生成预签名URL，有效期1小时
-            String presignedUrl = minioClient.getPresignedObjectUrl(
-                    GetPresignedObjectUrlArgs.builder()
-                            .method(Method.GET)
-                            .bucket("uploads")
-                            .object(objectName)
-                            .expiry(3600) // 1小时有效期
-                            .build());
+            String downloadUrl;
+            if ("oss".equals(storageService)) {
+                // 从OSS生成预签名URL，有效期1小时
+                java.util.Date expiration = new java.util.Date();
+                long expTimeMillis = expiration.getTime();
+                expTimeMillis += 1000 * 60 * 60; // 1小时
+                expiration.setTime(expTimeMillis);
+                // 直接使用 bucket 名称、对象名称和过期时间生成预签名URL
+                downloadUrl = ossClient.generatePresignedUrl(ossBucketName, objectName, expiration).toString();
+                logger.info("成功生成OSS文件下载链接: fileMd5={}, fileName={}, objectName={}, url={}",
+                        fileMd5, fileUpload.getFileName(), objectName, downloadUrl);
+            } else {
+                // 从MinIO生成预签名URL，有效期1小时
+                String presignedUrl = minioClient.getPresignedObjectUrl(
+                        GetPresignedObjectUrlArgs.builder()
+                                .method(Method.GET)
+                                .bucket("uploads")
+                                .object(objectName)
+                                .expiry(3600) // 1小时有效期
+                                .build());
+                downloadUrl = presignedUrl;
+                logger.info("成功生成MinIO文件下载链接: fileMd5={}, fileName={}, objectName={}",
+                        fileMd5, fileUpload.getFileName(), objectName);
+            }
 
-            logger.info("成功生成文件下载链接: fileMd5={}, fileName={}, objectName={}",
-                    fileMd5, fileUpload.getFileName(), objectName);
-            return presignedUrl;
+            return downloadUrl;
         } catch (Exception e) {
             logger.error("生成文件下载链接失败: fileMd5={}", fileMd5, e);
+            return null;
+        }
+    }
+
+    /**
+     * 生成文件预览链接（用于在浏览器中直接预览，如PDF）
+     * 
+     * @param fileMd5 文件MD5
+     * @return 预签名预览URL
+     */
+    public String generatePreviewUrl(String fileMd5) {
+        logger.info("生成文件预览链接: fileMd5={}", fileMd5);
+
+        try {
+            // 从数据库获取文件信息
+            FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
+                    .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
+
+            // 对象路径格式: merged/文件名
+            String objectName = "merged/" + fileUpload.getFileName();
+
+            String previewUrl;
+            if ("oss".equals(storageService)) {
+                // 从OSS生成预签名URL，有效期1小时
+                // 对于OSS，我们需要确保返回的URL不会触发下载
+                java.util.Date expiration = new java.util.Date();
+                long expTimeMillis = expiration.getTime();
+                expTimeMillis += 1000 * 60 * 60; // 1小时
+                expiration.setTime(expTimeMillis);
+                // 直接使用 bucket 名称、对象名称和过期时间生成预签名URL
+                previewUrl = ossClient.generatePresignedUrl(ossBucketName, objectName, expiration).toString();
+                logger.info("成功生成OSS文件预览链接: fileMd5={}, fileName={}, objectName={}, url={}",
+                        fileMd5, fileUpload.getFileName(), objectName, previewUrl);
+            } else {
+                // 从MinIO生成预签名URL，有效期1小时
+                String presignedUrl = minioClient.getPresignedObjectUrl(
+                        GetPresignedObjectUrlArgs.builder()
+                                .method(Method.GET)
+                                .bucket("uploads")
+                                .object(objectName)
+                                .expiry(3600) // 1小时有效期
+                                .build());
+                previewUrl = presignedUrl;
+                logger.info("成功生成MinIO文件预览链接: fileMd5={}, fileName={}, objectName={}",
+                        fileMd5, fileUpload.getFileName(), objectName);
+            }
+
+            return previewUrl;
+        } catch (Exception e) {
+            logger.error("生成文件预览链接失败: fileMd5={}", fileMd5, e);
             return null;
         }
     }
@@ -228,7 +312,7 @@ public class DocumentService {
         logger.info("获取文件预览内容: fileMd5={}, fileName={}", fileMd5, fileName);
 
         try {
-            // MinIO中的对象路径格式: merged/文件名
+            // 对象路径格式: merged/文件名
             String objectName = "merged/" + fileName;
 
             // 判断文件类型
@@ -237,11 +321,7 @@ public class DocumentService {
 
             if (isTextFile) {
                 // 对于文本文件，读取前10KB内容
-                try (InputStream inputStream = minioClient.getObject(
-                        GetObjectArgs.builder()
-                                .bucket("uploads")
-                                .object(objectName)
-                                .build())) {
+                try (InputStream inputStream = getFileInputStream(objectName)) {
 
                     BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
                     StringBuilder content = new StringBuilder();
@@ -285,6 +365,24 @@ public class DocumentService {
         } catch (Exception e) {
             logger.error("获取文件预览内容失败: fileMd5={}, fileName={}", fileMd5, fileName, e);
             return "预览失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 获取文件输入流，根据存储服务类型选择从OSS或MinIO获取
+     */
+    private InputStream getFileInputStream(String objectName) throws Exception {
+        if ("oss".equals(storageService)) {
+            // 从OSS获取文件输入流
+            OSSObject ossObject = ossClient.getObject(ossBucketName, objectName);
+            return ossObject.getObjectContent();
+        } else {
+            // 从MinIO获取文件输入流
+            return minioClient.getObject(
+                    GetObjectArgs.builder()
+                            .bucket("uploads")
+                            .object(objectName)
+                            .build());
         }
     }
 
@@ -345,15 +443,11 @@ public class DocumentService {
             FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
 
-            // MinIO中的对象路径格式: merged/文件名
+            // 对象路径格式: merged/文件名
             String objectName = "merged/" + fileUpload.getFileName();
 
             // 读取文件内容
-            try (InputStream inputStream = minioClient.getObject(
-                    GetObjectArgs.builder()
-                            .bucket("uploads")
-                            .object(objectName)
-                            .build())) {
+            try (InputStream inputStream = getFileInputStream(objectName)) {
 
                 BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
                 String content = reader.lines().collect(Collectors.joining("\n"));

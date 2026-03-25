@@ -160,9 +160,9 @@ public class OrgTagCacheService {
             if (userTags != null && !userTags.isEmpty()) {
                 allEffectiveTags.addAll(userTags);
             
-            // 查找所有父标签
-            for (String tagId : userTags) {
-                collectParentTags(tagId, allEffectiveTags);
+                // 查找所有父标签
+                for (String tagId : userTags) {
+                    collectParentTags(tagId, allEffectiveTags);
                 }
             }
             
@@ -229,4 +229,4 @@ public class OrgTagCacheService {
             logger.error("Failed to invalidate effective organization tags cache", e);
         }
     }
-} 
+}

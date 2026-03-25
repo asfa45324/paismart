@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { nextTick } from 'vue';
+import { nextTick, ref, computed } from 'vue';
 import { VueMarkdownIt } from 'vue-markdown-shiki';
 import { formatDate } from '@/utils/common';
 defineOptions({ name: 'ChatMessage' });
@@ -55,6 +55,14 @@ const content = computed(() => {
   }
 
   return rawContent;
+});
+
+// 判断是否为提示消息
+const isPromptMessage = computed(() => {
+  if (props.msg.role !== 'assistant') return false;
+  const content = props.msg.content ?? '';
+  // 简单判断：包含问号且内容较短的消息可能是提示
+  return content.includes('?') && content.length < 200;
 });
 
 // 处理内容点击事件（事件委托）
@@ -114,6 +122,13 @@ async function handleSourceFileClick(fileName: string) {
     window.$message?.error(`文件下载失败: ${decodedFileName}`);
   }
 }
+
+// 处理回答质量评分
+function handleRating(rating: 'like' | 'dislike') {
+  console.log('评分:', rating, '消息ID:', props.msg.id);
+  // 这里可以添加调用评分API的逻辑
+  window.$message?.success(rating === 'like' ? '感谢您的好评！' : '感谢您的反馈，我们会继续改进。');
+}
 </script>
 
 <template>
@@ -136,22 +151,44 @@ async function handleSourceFileClick(fileName: string) {
         <NText class="text-3 color-gray-500">{{ formatDate(msg.timestamp) }}</NText>
       </div>
     </div>
-    <NText v-if="msg.status === 'pending'">
-      <icon-eos-icons:three-dots-loading class="ml-12 mt-2 text-8" />
-    </NText>
-    <NText v-else-if="msg.status === 'error'" class="ml-12 mt-2 italic">服务器繁忙，请稍后再试</NText>
+    <div v-if="msg.status === 'pending'" class="ml-12 mt-2 flex items-center gap-4">
+      <icon-mdi-loading class="text-8 animate-spin" />
+      <NText class="text-4 color-gray-600">正在思考中...</NText>
+    </div>
+    <div v-else-if="msg.status === 'error'" class="ml-12 mt-2 flex items-center gap-4">
+      <icon-mdi-alert-circle class="text-8 text-error" />
+      <NText class="text-4 color-error">服务器繁忙，请稍后再试</NText>
+    </div>
     <div v-else-if="msg.role === 'assistant'" class="mt-2 pl-12" @click="handleContentClick">
-      <VueMarkdownIt v-if="content" :content="content" />
-      <NText v-else class="italic color-gray-500">暂无回答</NText>
+      <div v-if="isPromptMessage" class="bg-blue-50 p-4 rounded-lg border-l-4 border-blue-500 mb-4">
+        <VueMarkdownIt v-if="content" :content="content" />
+        <NText v-else class="italic color-gray-500">暂无回答</NText>
+      </div>
+      <div v-else>
+        <VueMarkdownIt v-if="content" :content="content" />
+        <NText v-else class="italic color-gray-500">暂无回答</NText>
+      </div>
     </div>
     <NText v-else-if="msg.role === 'user'" class="ml-12 mt-2 text-4">{{ content }}</NText>
     <NDivider class="ml-12 w-[calc(100%-3rem)] mb-0! mt-2!" />
     <div class="ml-12 flex gap-4">
       <NButton quaternary @click="handleCopy(msg.content)">
         <template #icon>
-          <icon-mynaui:copy />
+          <icon-mdi-content-copy />
         </template>
       </NButton>
+      <template v-if="msg.role === 'assistant' && msg.status === 'finished'">
+        <NButton quaternary @click="handleRating('like')">
+          <template #icon>
+            <icon-mdi-thumb-up />
+          </template>
+        </NButton>
+        <NButton quaternary @click="handleRating('dislike')">
+          <template #icon>
+            <icon-mdi-thumb-down />
+          </template>
+        </NButton>
+      </template>
     </div>
   </div>
 </template>

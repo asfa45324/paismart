@@ -292,7 +292,7 @@ async function onBeforeUpload(
     <SearchDialog v-model:visible="searchVisible" />
 
     <!-- 文件预览弹窗 -->
-    <NModal v-model:show="previewVisible" preset="card" title="文件预览" style="width: 80%; max-width: 1000px">
+    <NModal v-model:show="previewVisible" preset="card" title="文件预览" style="width: 90%; max-width: 1400px; height: 90vh; max-height: 800px;">
       <FilePreview :file-name="previewFileName" :visible="previewVisible" @close="closeFilePreview" />
     </NModal>
   </div>

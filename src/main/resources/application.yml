@@ -58,6 +58,12 @@ minio:
   secretKey: minioadmin
   bucketName: uploads
   publicUrl: http://localhost:9000
+
+oss:
+  endpoint: https://oss-cn-beijing.aliyuncs.com
+  accessKeyId: LTAI5tMG75pGd7ZC3SKK6VX2
+  accessKeySecret: KfPjWx5zB9fABiAr9HUuRXaycXiZIC
+  bucketName: hysyobs
 jwt:
   secret-key: "PXrQbuCwXwOZzkML/Vm2S5rSwt1iybvmKtGDzVEu+Hc="
 
