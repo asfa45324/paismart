@@ -100,7 +100,7 @@ deepseek:
   api:
     url: https://api.deepseek.com/v1
     model:  deepseek-chat
-    key: sk-30bddf773ba24b849d46a66a84659067
+    key: sk-834f38b23811461589fed09e5d0140d8
 
 embedding:
   api:
