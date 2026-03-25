@@ -330,4 +330,41 @@ public class DocumentService {
             return String.format("%.1f GB", size / (1024.0 * 1024.0 * 1024.0));
         }
     }
+
+    /**
+     * 获取文件内容
+     * 
+     * @param fileMd5 文件MD5
+     * @return 文件内容
+     */
+    public String getFileContent(String fileMd5) {
+        logger.info("获取文件内容: fileMd5={}", fileMd5);
+
+        try {
+            // 从数据库获取文件信息
+            FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
+                    .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
+
+            // MinIO中的对象路径格式: merged/文件名
+            String objectName = "merged/" + fileUpload.getFileName();
+
+            // 读取文件内容
+            try (InputStream inputStream = minioClient.getObject(
+                    GetObjectArgs.builder()
+                            .bucket("uploads")
+                            .object(objectName)
+                            .build())) {
+
+                BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
+                String content = reader.lines().collect(Collectors.joining("\n"));
+
+                logger.info("成功获取文件内容: fileMd5={}, contentLength={}", fileMd5, content.length());
+                return content;
+            }
+
+        } catch (Exception e) {
+            logger.error("获取文件内容失败: fileMd5={}", fileMd5, e);
+            throw new RuntimeException("获取文件内容失败: " + e.getMessage(), e);
+        }
+    }
 }

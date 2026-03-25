@@ -167,7 +167,8 @@ const local: App.I18n.Schema = {
     'knowledge-base': 'Knowledge Base',
     'org-tag': 'Organization Tag',
     user: 'User Management',
-    'personal-center': 'Personal Center'
+    'personal-center': 'Personal Center',
+    'file-analysis': 'File Analysis'
   },
   page: {
     login: {

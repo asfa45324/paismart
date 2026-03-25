@@ -22,11 +22,13 @@ declare module "@elegant-router/types" {
     "500": "/500";
     "chat": "/chat";
     "chat-history": "/chat-history";
+    "file-analysis": "/file-analysis";
     "iframe-page": "/iframe-page/:url";
     "knowledge-base": "/knowledge-base";
     "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?";
     "org-tag": "/org-tag";
     "personal-center": "/personal-center";
+    "resume-analysis": "/resume-analysis";
     "user": "/user";
   };
 
@@ -64,11 +66,13 @@ declare module "@elegant-router/types" {
     | "500"
     | "chat"
     | "chat-history"
+    | "file-analysis"
     | "iframe-page"
     | "knowledge-base"
     | "login"
     | "org-tag"
     | "personal-center"
+    | "resume-analysis"
     | "user"
   >;
 
@@ -93,9 +97,11 @@ declare module "@elegant-router/types" {
     | "login"
     | "chat-history"
     | "chat"
+    | "file-analysis"
     | "knowledge-base"
     | "org-tag"
     | "personal-center"
+    | "resume-analysis"
     | "user"
   >;
 

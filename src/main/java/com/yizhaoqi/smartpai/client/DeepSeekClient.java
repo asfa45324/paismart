@@ -159,4 +159,59 @@ public class DeepSeekClient {
             logger.error("处理数据块时出错: {}", e.getMessage(), e);
         }
     }
+
+    /**
+     * 发送消息并获取响应（非流式）
+     * @param message 消息内容
+     * @return 响应内容
+     */
+    public String sendMessage(String message) {
+        try {
+            Map<String, Object> request = new java.util.HashMap<>();
+            request.put("model", model);
+            
+            List<Map<String, String>> messages = new ArrayList<>();
+            messages.add(Map.of(
+                "role", "user",
+                "content", message
+            ));
+            request.put("messages", messages);
+            request.put("stream", false); // 非流式响应
+            
+            // 生成参数
+            AiProperties.Generation gen = aiProperties.getGeneration();
+            if (gen.getTemperature() != null) {
+                request.put("temperature", gen.getTemperature());
+            }
+            if (gen.getTopP() != null) {
+                request.put("top_p", gen.getTopP());
+            }
+            if (gen.getMaxTokens() != null) {
+                request.put("max_tokens", gen.getMaxTokens());
+            }
+            
+            String response = webClient.post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+            
+            // 解析响应，提取content
+            if (response != null) {
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode node = mapper.readTree(response);
+                String content = node.path("choices")
+                                   .path(0)
+                                   .path("message")
+                                   .path("content")
+                                   .asText("");
+                return content;
+            }
+        } catch (Exception e) {
+            logger.error("发送消息时出错: {}", e.getMessage(), e);
+        }
+        return "";
+    }
 } 

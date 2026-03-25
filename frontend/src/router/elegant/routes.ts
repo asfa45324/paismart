@@ -63,6 +63,17 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'file-analysis',
+    path: '/file-analysis',
+    component: 'layout.base$view.file-analysis',
+    meta: {
+      title: 'file-analysis',
+      i18nKey: 'route.file-analysis',
+      icon: 'solar:document-text-line-duotone',
+      order: 7
+    }
+  },
+  {
     name: 'iframe-page',
     path: '/iframe-page/:url',
     component: 'layout.base$view.iframe-page',
@@ -119,6 +130,15 @@ export const generatedRoutes: GeneratedRoute[] = [
       i18nKey: 'route.personal-center',
       icon: 'solar:people-nearby-line-duotone',
       order: 6
+    }
+  },
+  {
+    name: 'resume-analysis',
+    path: '/resume-analysis',
+    component: 'layout.base$view.resume-analysis',
+    meta: {
+      title: 'resume-analysis',
+      i18nKey: 'route.resume-analysis'
     }
   },
   {
