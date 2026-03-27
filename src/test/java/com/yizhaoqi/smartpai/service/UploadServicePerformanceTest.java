@@ -59,7 +59,5 @@ public class UploadServicePerformanceTest {
         logger.info("优化前耗时：{}ms", oldMethodTime);
         logger.info("优化后耗时：{}ms", newMethodTime);
         logger.info("性能提升：{}倍", oldMethodTime / newMethodTime);
-        //lxx
-        
     }
 } 

@@ -5,8 +5,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
 class SmartPaiApplicationTests {
-//test
-
     @Test
     void contextLoads() {
     }
